@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: shp
+          POSTGRES_PASSWORD: shp
+          POSTGRES_DB: shp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: shp
+      POSTGRES_PASSWORD: shp
+      POSTGRES_DB: shp
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint (ruff)
+        run: |
+          pip install ruff
+          ruff check orchestration agents tests
+
+      - name: Run pipeline unit tests
+        run: pytest tests/ -v
+
+      - name: Run pipeline once (smoke test)
+        run: python orchestration/flows/daily_pipeline.py
+
+      - name: dbt test
+        working-directory: transform/dbt_project
+        run: |
+          dbt deps || true
+          dbt run
+          dbt test

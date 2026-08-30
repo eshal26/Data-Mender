@@ -1,0 +1,15 @@
+name: 'self_healing_pipeline'
+version: '1.0.0'
+config-version: 2
+
+profile: 'self_healing_pipeline'
+
+model-paths: ["models"]
+test-paths: ["tests"]
+
+models:
+  self_healing_pipeline:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

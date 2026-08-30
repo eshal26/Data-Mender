@@ -1,0 +1,11 @@
+prefect==2.19.7
+psycopg2-binary==2.9.10
+requests==2.32.3
+python-dotenv==1.0.1
+dbt-core==1.8.2
+dbt-postgres==1.8.2
+streamlit==1.37.1
+pandas==2.2.3
+PyGithub==2.3.0
+groq==0.11.0
+pydantic==2.9.2

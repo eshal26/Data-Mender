@@ -1,0 +1,21 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: public
+    tables:
+      - name: raw_weather
+
+models:
+  - name: stg_weather
+    description: Cleaned, typed weather readings from raw_weather.
+    columns:
+      - name: ts
+        tests:
+          - not_null
+      - name: temperature_c
+        tests:
+          - not_null
+      - name: humidity_pct
+        tests:
+          - not_null

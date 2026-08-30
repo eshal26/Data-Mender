@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: shp_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shp}
+      POSTGRES_DB: ${POSTGRES_DB:-shp}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Optional: only needed if LLM_PROVIDER=ollama in .env. Default provider is
+  # Groq (hosted, free tier, no local setup) — see agents/*/[monitor|fix].py.
+  # After first `docker compose up -d ollama`, run:
+  #   docker compose exec ollama ollama pull llama3
+  ollama:
+    image: ollama/ollama:latest
+    container_name: shp_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.dashboard
+    container_name: shp_dashboard
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shp}:${POSTGRES_PASSWORD:-shp}@postgres:5432/${POSTGRES_DB:-shp}
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./dashboard:/app/dashboard
+
+volumes:
+  pgdata:
+  ollama_data:

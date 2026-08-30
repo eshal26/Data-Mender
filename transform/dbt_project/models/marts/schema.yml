@@ -1,0 +1,13 @@
+version: 2
+
+models:
+  - name: daily_weather_summary
+    description: One row per day, aggregated from stg_weather.
+    columns:
+      - name: day
+        tests:
+          - not_null
+          - unique
+      - name: reading_count
+        tests:
+          - not_null

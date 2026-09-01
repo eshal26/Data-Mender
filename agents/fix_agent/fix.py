@@ -25,7 +25,7 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # Fix proposals need stronger reasoning than classification, so this agent
 # defaults to the larger model.
-GROQ_MODEL_FIX = os.getenv("GROQ_MODEL_FIX", "llama-3.3-70b-versatile")
+GROQ_MODEL_FIX = os.getenv("GROQ_MODEL_FIX", "openai/gpt-oss-120b")
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
@@ -56,7 +56,7 @@ def propose_fix(category: str, summary: str, model_sql: str) -> str:
         json={
             "model": GROQ_MODEL_FIX,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
+            "temperature": 0,
         },
         timeout=60,
     )

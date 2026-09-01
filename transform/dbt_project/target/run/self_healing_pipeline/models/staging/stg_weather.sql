@@ -3,6 +3,12 @@
     
     
   as (
-    **EXPLANATION:**  
-I cannot propose a concrete fix without seeing the current contents of the `models\staging\stg_weather.sql` file. The missing file prevents me from identifying the exact column expressions that need a defensive cast or the source definition that is causing the “source not found” error. Please provide the full SQL of the model so I can apply the minimal, correct change.
+    select
+    ts,
+    temperature_c::double precision as temperature_c,
+    humidity_pct,
+    precipitation_mm,
+    loaded_at
+from "shp"."public"."raw_weather"
+where temperature_c ~ '^-?\d+(\.\d+)?$'
   );

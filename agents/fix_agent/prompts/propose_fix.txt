@@ -10,6 +10,9 @@ needs fixing. This is the ONLY source of truth for table names, source
 names, and column names — do not invent, rename, add, or remove ANY table
 name, source name, or column name that is not already present verbatim in
 this file:
+The exact source reference used in the file above is the ONLY valid one.
+Copy it character-for-character if you need it -- do not paraphrase, rename,
+or guess at the schema/table name inside `source(...)`.
 ---
 {model_sql}
 ---
@@ -30,6 +33,12 @@ Propose a minimal fix. Rules:
 - Keep the fix as small as possible: change only the specific column
   expression(s) that need to change. Do not restructure the query (no new
   CTEs, no `select *`, no reordering columns) unless strictly necessary.
+- Preserve every output column already selected by the model. Do not remove
+  columns such as timestamps, humidity, precipitation, or loaded_at just
+  because the failure is about one different column.
+- If a `not_null` test exists for the typed column, do not convert invalid
+  values to NULL. Filter only the rows whose values are invalid for that
+  specific typed column, and preserve all valid rows.
 - If the fix is a type-safety issue (e.g. BAD_DATA), prefer a defensive guard
   (e.g. a CASE + regex check before casting) over silently dropping the
   offending rows without explanation.

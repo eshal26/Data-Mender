@@ -131,11 +131,20 @@ if __name__ == "__main__":
                 f"{previous_failure_log[-3000:]}"
             )
         raw = propose_fix(args.category, summary, original_sql)
-        if "```sql" in raw:
+        if "```sql" in raw and raw.count("```") >= 2:
             return raw.split("```sql", 1)[1].split("```", 1)[0].strip()
+        print(
+            "WARNING: Fix Agent did not return a valid ```sql block. Raw response:\n"
+            f"{raw[:500]}\n"
+            "Falling back to the original SQL for this attempt.\n"
+        )
         return original_sql
 
-    success, final_sql, log, attempts = verify_with_retries(_propose, args.model_file)
+    success, final_sql, log, attempts = verify_with_retries(
+        _propose,
+        args.model_file,
+        original_sql=original_sql,
+    )
 
     if not success:
         print(f"Fix NOT verified after {attempts} attempt(s). Not opening a PR — escalate to a human.")

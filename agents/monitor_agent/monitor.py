@@ -21,7 +21,7 @@ load_dotenv()
 
 PG_DSN = (
     f"host={os.getenv('POSTGRES_HOST', 'localhost')} "
-    f"port={os.getenv('POSTGRES_PORT', '5432')} "
+    f"port={os.getenv('POSTGRES_PORT', '5433')} "
     f"dbname={os.getenv('POSTGRES_DB', 'shp')} "
     f"user={os.getenv('POSTGRES_USER', 'shp')} "
     f"password={os.getenv('POSTGRES_PASSWORD', 'shp')}"
@@ -31,7 +31,7 @@ PG_DSN = (
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL_MONITOR = os.getenv("GROQ_MODEL_MONITOR", "llama-3.1-8b-instant")
+GROQ_MODEL_MONITOR = os.getenv("GROQ_MODEL_MONITOR", "openai/gpt-oss-20b")
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")

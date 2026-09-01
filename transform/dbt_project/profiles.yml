@@ -4,19 +4,7 @@ self_healing_pipeline:
     dev:
       type: postgres
       host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
-      port: "{{ env_var('POSTGRES_PORT', '5432') | as_number }}"
-      user: "{{ env_var('POSTGRES_USER', 'shp') }}"
-      pass: "{{ env_var('POSTGRES_PASSWORD', 'shp') }}"
-      dbname: "{{ env_var('POSTGRES_DB', 'shp') }}"
-      schema: public
-      threads: 4
-self_healing_pipeline:
-  target: dev
-  outputs:
-    dev:
-      type: postgres
-      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
-      port: "{{ env_var('POSTGRES_PORT', '5432') | as_number }}"
+      port: "{{ env_var('POSTGRES_PORT', '5433') | as_number }}"
       user: "{{ env_var('POSTGRES_USER', 'shp') }}"
       pass: "{{ env_var('POSTGRES_PASSWORD', 'shp') }}"
       dbname: "{{ env_var('POSTGRES_DB', 'shp') }}"
@@ -25,7 +13,7 @@ self_healing_pipeline:
     staging_verify:
       type: postgres
       host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
-      port: "{{ env_var('POSTGRES_PORT', '5432') | as_number }}"
+      port: "{{ env_var('POSTGRES_PORT', '5433') | as_number }}"
       user: "{{ env_var('POSTGRES_USER', 'shp') }}"
       pass: "{{ env_var('POSTGRES_PASSWORD', 'shp') }}"
       dbname: "{{ env_var('POSTGRES_DB', 'shp') }}"

@@ -15,21 +15,22 @@ later stages):
     python orchestration/flows/daily_pipeline.py --break null_spike
 """
 import argparse
+import logging
 import os
 import subprocess
 import sys
 from datetime import datetime, timezone
 
-import psycopg2
 import requests
 from dotenv import load_dotenv
 from prefect import flow, task, get_run_logger
+from prefect.exceptions import MissingContextError
 
 load_dotenv()
 
 PG_DSN = (
     f"host={os.getenv('POSTGRES_HOST', 'localhost')} "
-    f"port={os.getenv('POSTGRES_PORT', '5432')} "
+    f"port={os.getenv('POSTGRES_PORT', '5433')} "
     f"dbname={os.getenv('POSTGRES_DB', 'shp')} "
     f"user={os.getenv('POSTGRES_USER', 'shp')} "
     f"password={os.getenv('POSTGRES_PASSWORD', 'shp')}"
@@ -45,9 +46,16 @@ DATA_SOURCE_URL = os.getenv(
 DBT_PROJECT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "transform", "dbt_project")
 
 
+def get_logger():
+    try:
+        return get_run_logger()
+    except MissingContextError:
+        return logging.getLogger(__name__)
+
+
 @task(retries=0)
 def fetch_data(inject: str | None) -> dict:
-    logger = get_run_logger()
+    logger = get_logger()
     resp = requests.get(DATA_SOURCE_URL, timeout=30)
     resp.raise_for_status()
     payload = resp.json()
@@ -65,7 +73,9 @@ def fetch_data(inject: str | None) -> dict:
 
 @task(retries=0)
 def load_raw(payload: dict, inject: str | None) -> int:
-    logger = get_run_logger()
+    import psycopg2
+
+    logger = get_logger()
     hourly = payload.get("hourly", {})
     times = hourly.get("time", [])
     temps = hourly.get("temperature_2m", [])
@@ -86,6 +96,33 @@ def load_raw(payload: dict, inject: str | None) -> int:
         )
         """
     )
+    cur.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'raw_weather'
+              AND column_name = 'temp_celsius'
+        )
+        """
+    )
+    has_temp_celsius = cur.fetchone()[0]
+    cur.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'raw_weather'
+              AND column_name = 'temperature_c'
+        )
+        """
+    )
+    has_temperature_c = cur.fetchone()[0]
+    if has_temp_celsius and not has_temperature_c:
+        cur.execute("ALTER TABLE raw_weather RENAME COLUMN temp_celsius TO temperature_c")
+        logger.info("Restored raw_weather.temperature_c after prior schema_drift run")
 
     if inject == "schema_drift":
         # Simulate an upstream API/schema change: rename a column dbt expects.
@@ -99,9 +136,9 @@ def load_raw(payload: dict, inject: str | None) -> int:
     cur.execute("TRUNCATE raw_weather")
 
     rows = list(zip(times, temps, humidity, precip))
-    for ts, t, h, p in rows:
-        if inject == "bad_column":
-            # Simulate a broken transform upstream: write text into a numeric column.
+    for idx, (ts, t, h, p) in enumerate(rows):
+        if inject == "bad_column" and idx == 0:
+            # Simulate one bad upstream value: text in a numeric column.
             cur.execute(
                 "INSERT INTO raw_weather (ts, temperature_c, humidity_pct, precipitation_mm) "
                 "VALUES (%s, %s, %s, %s)",
@@ -124,7 +161,7 @@ def load_raw(payload: dict, inject: str | None) -> int:
 @task(retries=0)
 def run_dbt() -> tuple[bool, str]:
     """Runs `dbt run` then `dbt test`. Returns (success, combined_log_text)."""
-    logger = get_run_logger()
+    logger = get_logger()
     log_chunks = []
     success = True
 
@@ -144,6 +181,8 @@ def run_dbt() -> tuple[bool, str]:
 
 @task(retries=0)
 def write_run_log(success: bool, log_text: str, inject: str | None) -> None:
+    import psycopg2
+
     conn = psycopg2.connect(PG_DSN)
     cur = conn.cursor()
     cur.execute(
@@ -168,7 +207,7 @@ def write_run_log(success: bool, log_text: str, inject: str | None) -> None:
 
 @flow(name="daily_pipeline")
 def daily_pipeline(inject: str | None = None):
-    logger = get_run_logger()
+    logger = get_logger()
     logger.info("Starting run at %s (inject=%s)", datetime.now(timezone.utc).isoformat(), inject)
 
     payload = fetch_data(inject)

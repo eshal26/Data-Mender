@@ -5,7 +5,7 @@
 
 
 select day
-from "shp"."public"."daily_weather_summary"
+from "shp"."staging_verify"."daily_weather_summary"
 where day is null
 
 

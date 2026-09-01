@@ -5,9 +5,9 @@ models:
     description: One row per day, aggregated from stg_weather.
     columns:
       - name: day
-        tests:
+        data_tests:
           - not_null
           - unique
       - name: reading_count
-        tests:
+        data_tests:
           - not_null

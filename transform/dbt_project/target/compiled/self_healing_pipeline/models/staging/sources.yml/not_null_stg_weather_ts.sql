@@ -5,7 +5,7 @@
 
 
 select ts
-from "shp"."public"."stg_weather"
+from "shp"."staging_verify"."stg_weather"
 where ts is null
 
 

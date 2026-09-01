@@ -5,7 +5,7 @@
 
 
 select humidity_pct
-from "shp"."public"."stg_weather"
+from "shp"."staging_verify"."stg_weather"
 where humidity_pct is null
 
 

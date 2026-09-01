@@ -6,5 +6,5 @@ select
     avg(humidity_pct)                  as avg_humidity_pct,
     sum(precipitation_mm)              as total_precipitation_mm,
     count(*)                           as reading_count
-from "shp"."public"."stg_weather"
+from "shp"."staging_verify"."stg_weather"
 group by 1

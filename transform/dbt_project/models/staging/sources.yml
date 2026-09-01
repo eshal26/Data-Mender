@@ -11,11 +11,11 @@ models:
     description: Cleaned, typed weather readings from raw_weather.
     columns:
       - name: ts
-        tests:
+        data_tests:
           - not_null
       - name: temperature_c
-        tests:
+        data_tests:
           - not_null
       - name: humidity_pct
-        tests:
+        data_tests:
           - not_null

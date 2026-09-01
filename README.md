@@ -1,137 +1,173 @@
+# DataMender
 
-All components run in Docker. GitHub Actions lints + tests every PR
-(including agent-proposed ones). Streamlit dashboard shows pipeline health
-over time.
+A self-healing data pipeline that ingests, cleans, and transforms data on a
+schedule — watched over by two LLM agents instead of a human on-call
+engineer. When the pipeline breaks, a Monitor Agent diagnoses why, a Fix
+Agent proposes a patch, an automated verifier tests that patch in an
+isolated schema (retrying on failure), and — only once a fix is proven safe
+— a GitHub pull request is opened for human review. Nothing merges
+automatically.
 
-## Build stages
+**Zero-cost stack**: Postgres, Prefect, dbt Core, Groq (free-tier hosted LLM
+inference, swappable for local Ollama), GitHub Actions, Streamlit.
 
-- [x] **Stage 0 — Plumbing.** Working pipeline, no AI. Prefect → Postgres →
-      dbt models + tests. Includes a `--break` mode to deliberately inject
-      failures (bad SQL, schema drift, null spikes) so later stages have
-      real failures to classify.
-- [x] **Stage 1 — Read-only Monitor Agent.** Classifies + summarizes failures
-      in plain English. No fixing yet. Confirmed working: correctly
-      classified an injected type-mismatch failure as `BAD_DATA` with an
-      accurate root-cause summary.
-- [x] **Stage 2 — Fix Agent.** Proposes a fix as a diff. Confirmed working,
-      with real caveats documented below under Findings.
-- [x] **Stage 3 — Verification loop.** Fix auto-applied to a `staging_verify`
-      schema, `dbt run` + `dbt test` re-run, pass/fail fed back to the Fix
-      Agent for a retry (max 3 attempts) before escalating. A fix only
-      counts as verified if BOTH `dbt run` and `dbt test` pass. Mechanism
-      confirmed working (correctly escalates instead of opening a bad PR);
-      fix quality from the LLM is still inconsistent — see Findings.
-- [x] **Stage 4 — PR automation.** Reuses the Stage 3 verify loop; on a
-      passing fix, opens a real GitHub PR with the diff and Monitor/Fix
-      Agent reasoning attached. Requires `GITHUB_TOKEN` + `GITHUB_REPO` in
-      `.env`. Never merges automatically.
-- [ ] **Stage 5 — CI/CD + dashboard.** GitHub Actions workflow and Streamlit
-      dashboard are scaffolded; CI dependency versions were fixed to match
-      what actually works locally (see `requirements.txt`).
+## Architecture
+
+    Data Source (free API)
+            │  scheduled
+            ▼
+    Prefect: ingest → raw Postgres table
+            ▼
+    dbt: staging models → marts + tests
+            │  pipeline succeeds / fails
+            ▼
+    MONITOR AGENT (Groq, read-only) — classifies the failure
+            ▼
+    FIX AGENT (Groq, temperature=0, branch-only) — proposes a patch
+            ▼
+    Staging verifier: apply fix to `staging_verify`, run
+    dbt run + dbt test + row-retention check, retry (max 3)
+            │
+       pass │        │ fail after 3 attempts
+            ▼        ▼
+      Open GitHub PR    Escalate to a human
+      (human approves)
+
+All components run in Docker. GitHub Actions lints + tests every PR.
+Streamlit dashboard shows pipeline health over time.
+
+## Status
+
+All 5 stages are implemented and have been run end-to-end successfully,
+including an autonomous run that opened a real GitHub PR after the Fix
+Agent produced a working fix and the verifier confirmed it. See Findings
+for two distinct "fix looks correct but isn't" cases the verifier caught.
+
+- [x] **Stage 0 — Plumbing.** Prefect → Postgres → dbt, with
+      `--break {bad_column|schema_drift|null_spike}` to inject failures.
+- [x] **Stage 1 — Monitor Agent.** Read-only. Classifies the latest failure
+      (`BAD_DATA`, `SCHEMA_DRIFT`, `TEST_FAILURE`, `UNKNOWN`) with a summary.
+- [x] **Stage 2 — Fix Agent.** Proposes a corrected model file as a diff.
+- [x] **Stage 3 — Staging verifier.** Applies the fix to an isolated
+      `staging_verify` schema, runs `dbt run` + `dbt test` + a
+      row-retention check, retries up to 3 times before escalating.
+- [x] **Stage 4 — PR automation.** Opens a GitHub PR on a verified fix
+      (needs `GITHUB_TOKEN` + `GITHUB_REPO`). Never merges automatically.
+- [ ] **Stage 5 — CI/CD + dashboard.** Scaffolded and runnable, not polished.
 
 ## Findings (real issues hit while building this)
 
-These came up during actual development and are worth keeping — they're
-better interview material than a project that "just worked":
-
-- **Native Postgres vs. Docker Postgres port conflict.** A Windows-native
-  `postgres.exe` service was silently listening on the same port (5432) as
-  the Docker container, so connections were routed to the wrong server with
-  the wrong credentials. Fixed by moving Docker's Postgres to port 5433.
-- **A fix can build successfully but still be wrong.** An early Fix Agent
-  proposal cast bad values to `NULL` instead of dropping the row — `dbt run`
-  passed, but `dbt test`'s `not_null` constraint caught it. This is the
-  concrete case for why Stage 3 checks BOTH `dbt run` and `dbt test`, not
-  just one.
-- **LLM dialect/schema hallucination.** The Fix Agent (on a 70B model)
-  repeatedly invented SQL Server syntax (`TRY_CAST`, not valid in Postgres),
-  invalid Jinja comment syntax (`{{-- --}}` instead of `{# #}`), and
-  fabricated table/column names not present in the actual file (e.g.
-  `raw_table`, `humidity`, `wind_speed` instead of the real schema). Tighter,
-  more explicit prompt constraints (dialect lock, "copy identifiers verbatim,
-  do not invent them") measurably reduced but did not eliminate this.
-- **Unsafe extraction of the LLM's response.** When the Fix Agent didn't
-  return a clean ` ```sql ` code block (e.g. it asked a clarifying question
-  instead), the original extraction logic fell back to treating the raw
-  prose as SQL, writing English text into a `.sql` file and producing
-  confusing downstream errors. Fixed by falling back to the original,
-  unmodified SQL when no valid code block is found, so a bad LLM response
-  never corrupts the model file.
-- **Model deprecation.** `llama-3.1-8b-instant` and `llama-3.3-70b-versatile`
-  were shut down on Groq's free tier partway through development; swapped
-  to `openai/gpt-oss-20b` / `openai/gpt-oss-120b`.
-- **Windows encoding mismatches.** LLM-generated text often includes Unicode
-  punctuation (em-dashes, non-breaking hyphens) that Windows' default
-  `cp1252` encoding can't write to disk. Fixed by forcing `encoding="utf-8"`
-  on every file read/write and subprocess call in the verifier.
+- **Native vs. Docker Postgres port conflict.** A Windows-native
+  `postgres.exe` silently shared port 5432 with Docker's container, routing
+  connections to the wrong server. Fixed by moving Docker to port 5433.
+- **Fix passes build, fails tests.** An early fix cast bad values to `NULL`
+  instead of dropping the row — `dbt run` passed, `dbt test`'s `not_null`
+  check correctly caught it.
+- **Fix passes tests, drops all data.** A later fix passed both `dbt run`
+  and `dbt test` but had filtered out 100% of rows — an empty table
+  trivially satisfies `not_null`. Only caught after adding a dedicated
+  row-retention check comparing raw vs. staging row counts. The strongest
+  concrete case for why "tests passed" isn't sufficient on its own.
+- **LLM dialect/schema hallucination.** The Fix Agent invented SQL Server
+  syntax (`TRY_CAST`), invalid Jinja comments (`{{-- --}}`), and fabricated
+  table/column names. Reduced (not eliminated) via `temperature=0` and an
+  explicit "copy identifiers verbatim" prompt rule.
+- **Unsafe LLM output handling.** When the Fix Agent returned prose instead
+  of a ```sql``` block, the original code wrote that prose into the `.sql`
+  file. Fixed by falling back to the unmodified original SQL when no valid
+  code block is found.
+- **Model deprecation mid-project.** `llama-3.1-8b-instant` /
+  `llama-3.3-70b-versatile` were shut down on Groq's free tier; swapped to
+  `openai/gpt-oss-20b` / `openai/gpt-oss-120b`.
+- **Windows encoding mismatches.** LLM output often contains Unicode
+  punctuation that Windows' default `cp1252` encoding can't write, and dbt
+  can't parse. Fixed by forcing `encoding="utf-8"` everywhere.
+- **Non-determinism at temperature 0.** The same failure and prompt
+  produced different outcomes across runs — worth stating plainly rather
+  than claiming full determinism.
 
 ## Free stack
 
 | Component | Tool |
 |---|---|
-| Orchestration | Prefect (Docker, local) |
+| Orchestration | Prefect (Docker) |
 | Database | Postgres (Docker) |
 | Transform | dbt Core |
-| Agents (LLM) | Groq API free tier (`openai/gpt-oss-20b` for Monitor, `openai/gpt-oss-120b` for Fix) — swap to local Ollama via `LLM_PROVIDER=ollama` |
-| Version control / CI | GitHub + GitHub Actions |
-| Containers | Docker Desktop |
+| Agents | Groq free tier (`gpt-oss-20b` Monitor, `gpt-oss-120b` Fix, temp=0) — or local Ollama via `LLM_PROVIDER=ollama` |
+| CI | GitHub Actions |
 | Dashboard | Streamlit |
-| Data source | Free public API (default: Open-Meteo weather API, no key needed) |
+| Data source | Open-Meteo weather API (free, no key) |
 
-## Quickstart
+## Setup
 
+**1. Prerequisites:** Python 3.11+, Docker Desktop, a free Groq key
+(console.groq.com/keys), and optionally a GitHub token with `repo` scope
+(github.com/settings/tokens) for Stage 4.
+
+**2. Configure:**
 ```bash
 cp .env.example .env
-# add your free Groq key (console.groq.com/keys, no credit card) to .env as GROQ_API_KEY
-docker compose up -d postgres
-
-# run the pipeline once, normally
-python orchestration/flows/daily_pipeline.py
-
-# run it in "break" mode to inject a failure on purpose
-python orchestration/flows/daily_pipeline.py --break bad_column
-
-cd transform/dbt_project
-dbt run
-dbt test
+# set GROQ_API_KEY, and optionally GITHUB_TOKEN + GITHUB_REPO
 ```
 
-To exercise the full agent chain:
+**3. Start Postgres:**
+```bash
+docker compose up -d postgres
+```
+> Windows: if a native Postgres service already runs on 5432, it can
+> silently conflict with Docker's container. This project defaults Docker
+> to port **5433** to avoid that — check `netstat -ano | findstr :5432`
+> if you still see auth errors.
+
+**4. Install dependencies:**
+```bash
+pip install -r requirements.txt
+```
+> Windows: versions are pinned to ones with prebuilt wheels for Python 3.13
+> (`dbt-postgres==1.8.2`, `psycopg2-binary==2.9.10`, `pandas==2.2.3`,
+> `griffe==0.47.0`, `pydantic==2.9.2`). A build error asking for a C++
+> compiler usually means a stale pin, not a missing compiler.
+
+**5. Run the pipeline:**
+```bash
+python orchestration/flows/daily_pipeline.py
+python orchestration/flows/daily_pipeline.py --break bad_column   # inject a failure
+cd transform/dbt_project && dbt run && dbt test
+```
+> Windows: `dbt` reads `profiles.yml` via real shell env vars, not `.env`.
+> If `dbt` can't connect (but the Python pipeline can), set them manually:
+> `$env:POSTGRES_HOST="127.0.0.1"`, `$env:POSTGRES_PORT="5433"`,
+> `$env:POSTGRES_USER="shp"`, `$env:POSTGRES_PASSWORD="shp"`,
+> `$env:POSTGRES_DB="shp"`.
+
+**6. Run the agents:**
+```bash
+python agents/monitor_agent/monitor.py
+python agents/fix_agent/fix.py --category BAD_DATA --summary "<summary>" --model-file transform/dbt_project/models/staging/stg_weather.sql
+```
+
+**7. Run the full automated loop:**
 ```bash
 python orchestration/flows/daily_pipeline.py --break bad_column
-python agents/monitor_agent/monitor.py
-python agents/verifier/staging_runner.py --model-file transform/dbt_project/models/staging/stg_weather.sql --category BAD_DATA --summary "<paste Monitor Agent's summary>"
+python agents/verifier/staging_runner.py --model-file transform/dbt_project/models/staging/stg_weather.sql --category BAD_DATA --summary "temperature_c contains non-numeric text values causing a cast failure"
+
+# same, but opens a PR on success (needs GITHUB_TOKEN)
+python agents/github_integration/open_pr.py --model-file transform/dbt_project/models/staging/stg_weather.sql --category BAD_DATA --summary "temperature_c contains non-numeric text values causing a cast failure"
 ```
 
-To also open a PR on a verified fix, add `GITHUB_TOKEN` (a Personal Access
-Token with `repo` scope, from github.com/settings/tokens) and `GITHUB_REPO`
-to `.env`, then run `agents/github_integration/open_pr.py` with the same
-arguments as `staging_runner.py`.
+**8. Run tests:**
+```bash
+pytest tests/ -v
+```
 
 ## Repo structure
 
-- `orchestration/flows/daily_pipeline.py` — Prefect flow: fetch → load → dbt run/test
-- `transform/dbt_project/` — dbt models + tests
-- `agents/monitor_agent/monitor.py` — Stage 1: read-only failure classifier
-- `agents/fix_agent/fix.py` — Stage 2: proposes a fix
-- `agents/verifier/staging_runner.py` — Stage 3: verifies a fix in an isolated schema, retries, escalates
-- `agents/github_integration/open_pr.py` — Stage 4: opens a PR on a verified fix
-- `dashboard/app.py` — Stage 5: Streamlit health dashboard
-
-## Talking points (for CV / interviews)
-
-- How infinite fix-retry loops are prevented (max retry count + escalation)
-- How agent permissions are scoped (monitor = read-only, fix = write-branch
-  only, never touches `main`/prod)
-- Why "tests passed" isn't proof a fix is correct — concrete example: a fix
-  that converts bad values to `NULL` passes `dbt run` but fails a `not_null`
-  test
-- LLM reliability issues in structured code generation: dialect
-  hallucination, schema hallucination, and unsafe assumptions about output
-  format — and the defensive coding needed around an LLM's output before
-  trusting it (never write an unvalidated LLM response straight to a file)
-- Cost/latency tradeoffs of running LLM calls inside a monitoring loop
-- What would change for a production version (tighter guardrails, human
-  review before *any* staging re-run on high-risk tables, possibly a more
-  constrained/deterministic model or a diff-based rather than full-file-
-  regeneration fix format)
+    orchestration/flows/daily_pipeline.py   # Prefect: fetch → load → dbt
+    transform/dbt_project/                  # dbt models, sources, tests
+    agents/monitor_agent/monitor.py         # Stage 1: failure classifier
+    agents/fix_agent/fix.py                 # Stage 2: proposes a fix
+    agents/verifier/staging_runner.py       # Stage 3: verify + retry + escalate
+    agents/github_integration/open_pr.py    # Stage 4: opens a PR on success
+    dashboard/app.py                        # Stage 5: Streamlit health view
+    .github/workflows/ci.yml                # lint + test on every PR
+    tests/                                  # pytest suite
